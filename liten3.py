@@ -1,14 +1,14 @@
 #!/usr/bin/env python
-#Liten2 - Deduplication command line tool
+#Liten3 - Deduplication command line tool
 #Author: Alfredo Deza (Initial Development by Noah Gift)
 #License: GPLv3 License
 #Email: alfredodeza [at] gmail dot com
 
-__version__ = "0.0.2"
-__date__ = "2009-03-06"
+__version__ = "0.0.3"
+__date__ = "2017-07-06"
 
 """
-Liten2 walks through a given path and creates a Checksum based on
+Liten3 walks through a given path and creates a Checksum based on
 the Sha1 library storing all the data in a Sqlite3 database.
 You can run different kinds of reports once this has been done,
 which gives you the ability to determine what files to delete.
@@ -46,37 +46,37 @@ class Walk(object):
         """Walks through and entire directory to create the checksums exporting
         the result at the end."""
         db = DbWork()
-	
+    
         searched_files = 0
-	print self.path
-	number_of_files = sum(len(filenames) for path, dirnames, filenames in os.walk(self.path))
-	
-	print "Number of files to scan : %s" %number_of_files
+        print(self.path)
+        number_of_files = sum(len(filenames) for path, dirnames, filenames in os.walk(self.path))
+    
+        print("Number of files to scan : %s" %number_of_files)
         pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=number_of_files).start()
         for root, dir, files in os.walk(self.path):
-    	  #for i in range(number_of_files):
-	
+        #for i in range(number_of_files):
+
             for f in files:
                 searched_files += 1
-		
+        
                 try:
                     absolute = os.path.join(root, f)
                     if os.path.isfile(absolute):
                         size = os.path.getsize(absolute)
-			
-			pbar.update((searched_files-1)+1)
+            
+                        pbar.update((searched_files-1)+1)
                         if size > self.size:
-			
+            
                             readfile = open(absolute).read(16384)
                             sh = hashlib.sha224(readfile).hexdigest()
                             db.insert(absolute, size, sh)
             
                 except IOError:
                     pass
-	pbar.finish()
-        db.insert_opts(searched_files, self.size)
-        db.export()
-	
+                    pbar.finish()
+                    db.insert_opts(searched_files, self.size)
+                    db.export()
+    
 
 
 class Report(object):
@@ -92,7 +92,7 @@ class Report(object):
             for i in self.sqlfile.readlines():
                 self.c.executescript(i)
         else:
-            print "SQL file not found. Run liten2.py to build a new one."
+            print("SQL file not found. Run liten3.py to build a new one.")
             sys.exit(1)
             
         if self.full:
@@ -101,26 +101,26 @@ class Report(object):
     def fullreport(self):
         """Returns all reports available"""
         for dup_count in self.count_dups():
-            print ""
-            print "Duplicate files list"
-        print "--------------------------------------"
+            print("")
+            print("Duplicate files list")
+        print("--------------------------------------")
         for paths in self.path_dups():
-            print "%smb ::  %s" %(self.humanvalue(paths[2]) , paths[0])
+            print("%smb ::  %s" %(self.humanvalue(paths[2]) , paths[0]))
             
-        print ""
-        print "Liten2 Full Reporting"
-        print "--------------------------------------"
+        print("")
+        print("Liten3 Full Reporting")
+        print("--------------------------------------")
         for dup_count in self.count_dups():
-            print "Duplicate files found:\t %s" % dup_count[0]
+            print("Duplicate files found:\t %s" % dup_count[0])
         for getsize in self.size_searched():
-            print "File Size searched:\t %s MB" % self.humanvalue(getsize[0])        
-        print "Total MB wasted:\t %s MB" % self.totalmb()
+            print("File Size searched:\t %s MB" % self.humanvalue(getsize[0]))
+        print("Total MB wasted:\t %s MB" % self.totalmb())
         for i in self.file_num():
-            print "Files found over %s MB:\t %s" % (self.humanvalue(getsize[0]), i[0])
+            print("Files found over %s MB:\t %s" % (self.humanvalue(getsize[0]), i[0]))
         for i in self.total_files():
-            print "Total files searched:\t %s" % i[0]
-        print ""
-        print "To delete files, run liten2 in interactive mode:\npython liten2.py -i"
+            print("Total files searched:\t %s" % i[0])
+        print("")
+        print("To delete files, run liten3 in interactive mode:\npython liten3.py -i")
         
     def total_files(self):
         """Return Absolute total of files searched"""
@@ -233,7 +233,7 @@ class Interactive(object):
             for i in self.sqlfile.readlines():
                 self.c.executescript(i)
         else:
-            print "SQL file not found for interactive mode. Run liten2.py to build a new one."
+            print("SQL file not found for interactive mode. Run liten3.py to build a new one.")
             sys.exit(1)
             
     def session(self):
@@ -246,11 +246,11 @@ class Interactive(object):
                 single.append(duplicates[1])
 
         if self.dryrun:
-            print "\n#####################################################"
-            print "# Running in DRY RUN mode. No files will be deleted #"
-            print "#####################################################\n"
-        print """
-\t LITEN 2 \n
+            print("\n#####################################################")
+            print("# Running in DRY RUN mode. No files will be deleted #")
+            print("#####################################################\n")
+        print("""
+\t LITEN 3 \n
 
 Starting a new Interactive Session.
 
@@ -259,7 +259,7 @@ Starting a new Interactive Session.
 * Hit Enter to skip to the next group.
 * Ctrl-C cancels the operation, nothing will be deleted.
 * Confirm your selections at the end.\n
--------------------------------------------------------\n"""
+-------------------------------------------------------\n""")
 
         try:
             for checksum in single:
@@ -268,7 +268,7 @@ Starting a new Interactive Session.
                 match = {}
                 for i in group:
                     match[count] = i[0]
-                    print "%d \t %s" % (count, i[0])
+                    print("%d \t %s" % (count, i[0]))
                     count += 1
                 numbers = []
                 try:
@@ -281,17 +281,17 @@ Starting a new Interactive Session.
                             answer = False
                             
                 except ValueError:
-                    print "--------------------------------------------------\n"
+                    print("--------------------------------------------------\n")
             
-            print "Files selected for complete removal:\n"
+            print("Files selected for complete removal:\n")
             for selection in for_deletion:
                 if selection:
-                    print selection
-            print ""
+                    print(selection)
+            print("")
             if self.dryrun:
-                print "###########################"
-                print "# DRY RUN mode ends here. #"
-                print "###########################\n"
+                print("###########################")
+                print("# DRY RUN mode ends here. #")
+                print("###########################\n")
             if not self.dryrun:
                 confirm = raw_input("Type Yes to confirm (No to cancel): ")
                 if confirm in ["Yes", "yes", "Y", "y"]:
@@ -299,15 +299,15 @@ Starting a new Interactive Session.
                         if selection:
                             
                             try:
-                                print "Removing file:\t %s" % selection
+                                print("Removing file:\t %s" % selection)
                                 os.remove(selection)
                             except OSError:
                                 "Could not delete:\t %s \nCheck Permissions" % selection
             else:
-                print "Cancelling operation, no files were deleted."
+                print("Cancelling operation, no files were deleted.")
                     
         except KeyboardInterrupt:
-            print "\nExiting nicely from interactive mode. No files deleted\n"
+            print("\nExiting nicely from interactive mode. No files deleted\n")
                 
     def separate(self, checksum):
         list = []
@@ -362,7 +362,7 @@ def main():
             sys.exit(0)
             
         except (KeyboardInterrupt, SystemExit):
-            print "\nExiting nicely from Liten2..."
+            print("\nExiting nicely from Liten3...")
             sys.exit(1)            
         
     if options.interactive:
@@ -373,7 +373,7 @@ def main():
         run.session()
 
     else:
-        sys.stderr.write("For help please run: \nliten2.py --help"'\n')
+        sys.stderr.write("For help please run: \nliten3.py --help"'\n')
         sys.exit(1)
 
 if __name__=="__main__":
