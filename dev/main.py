@@ -76,6 +76,8 @@ def main():
     p.add_option('--interactive', '-i', action="store_true", help='Interactive mode to delete files')
     options, arguments = p.parse_args()
 
+
+
     """ Test options"""
     if options.open and options.tmpDB:
         sys.stderr.write("Do you want to use a temporary database (--tmpDB) or not?")
@@ -110,22 +112,7 @@ def main():
 
 
 
-
     """ Start program"""
-    if options.report:
-        if options.open:
-            file = options.open
-            if os.path.isfile(file):
-                out = Report(file)
-            else:
-                sys.stderr.write("\nYou have selected a non existent or invalid file\n")
-                sys.exit(1)
-                
-        else:
-            out = Report(DB)
-            out.setDebug(debug)
-        return out
-        
     if options.path:
         for path in options.path:
             if not os.path.isdir(path):
@@ -144,13 +131,15 @@ def main():
 
         DB.rmOldFiles(options.path)
         DB.findDuplicates(options.path, options.hashall)
+        options.report = options.path
 
+    if options.report:
         out = Report(DB)
+        if not options.path: options.path = "/"
         if options.export:
             out.fullreport(options.path, options.export)
         else:
             out.fullreport(options.path, None)
-
 
 
     if options.interactive or options.delete:

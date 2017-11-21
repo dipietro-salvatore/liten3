@@ -3,6 +3,11 @@ import sqlite3
 import time
 import hashlib
 
+from progressbar import Bar, Percentage, ProgressBar
+
+
+
+
 class DbWork(object):
     """All the Database work happens here"""
 
@@ -135,12 +140,21 @@ class DbWork(object):
             if self.debug: print(" ".join(command))
             allsamesizeresults = self.c.execute(" ".join(command)).fetchall()
 
+            count = 0
+            print("\n\n")
+            print("Calculate Hash for the files with the same size. Number of files: %i" % (len(allsamesizeresults)))
+            pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=len(allsamesizeresults)).start()
+
             #Calculate the HASH for FILES with same SIZE
             for r in allsamesizeresults:
                 samesize = self.c.execute("SELECT path FROM files WHERE bytes = ?", (r['bytes'],)).fetchall()
                 for r_i in samesize:
                     self.addHash(r_i['path'])
 
+                count += 1
+                pbar.update(count)
+            pbar.finish()
+            print("\n")
 
         """ Get records with same HASH"""
         allsamehashresults = self.c.execute("SELECT hashesid, count(*) as c FROM files GROUP BY hashesid HAVING c > 1 ORDER BY c DESC").fetchall()

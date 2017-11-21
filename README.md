@@ -6,7 +6,7 @@ Date: Nov 2017
 Contact: dipietro.salvatore at gmail.com  
 License: GPLv3  
 
-Liten3 will search a given directory and find duplicate files building a report at the end.  
+Liten3 searches in a given directory the duplicate files, producing a report at the end of its execution.  
 It uses an SQLite DB to store searches and optimize file handling after it has run.  
 SHA-512 is used as a checksum method, this will provide a better and more precise way of handling differences in files.  
 Currently working on GNU/Linux and Mac OS Operating Systems (not tested on Windows).  

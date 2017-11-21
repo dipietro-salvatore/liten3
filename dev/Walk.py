@@ -44,7 +44,3 @@ class Walk(object):
                 except IOError:
                     pass
                     pbar.finish()
-
-        #self.db.rmOldFiles(self.path)
-        #self.db.findDuplicates(self.path)
-        # self.db.showduplicates(self.path)
