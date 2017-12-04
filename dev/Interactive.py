@@ -11,8 +11,8 @@ class Interactive(object):
         self.autoDelete = False
 
 
-    def setDebug(self, debug=False):
-        self.debug=debug
+    # def setDebug(self, debug=False):
+    #     self.debug=debug
 
     def session(self, paths="%"):
         "starts a new session"
@@ -36,7 +36,7 @@ Starting a new Interactive Session.
         for_deletion = list()
 
         try:
-            for r in self.DB.getDuplicates(paths).fetchall():
+            for r in self.DB.getDuplicatesWithFilesAndHashes(paths).fetchall():
                 hash = self.DB.getDuplicate(r['hashesid'], paths).fetchall()
                 if len(hash) > 1:
                     filepaths = list([""])
@@ -47,7 +47,7 @@ Starting a new Interactive Session.
                             print("%d \t %s" % (count, i['path']))
                             count += 1
                     if self.autoDelete :
-                        files = self.areFilesInFolder(filepaths)
+                        files = self.are_files_in_folder(filepaths)
                         if files is not None:
                             for_deletion = for_deletion + files
 
@@ -96,7 +96,7 @@ Starting a new Interactive Session.
         self.autoDelete = True
         self.deletePaths = deletePaths
 
-    def areFilesInFolder(self, filesPath):
+    def are_files_in_folder(self, filesPath):
         founded = list()
         toDelete = list()
 

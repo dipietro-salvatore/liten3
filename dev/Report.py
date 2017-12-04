@@ -13,32 +13,32 @@ class Report(object):
         self.duplicatedFilesSize = None
 
         if self.full:
-            self.fullreport()
+            self.full_report()
 
-    def setDebug(self, debug=False):
-        self.debug=debug
+    # def setDebug(self, debug=False):
+    #     self.debug=debug
 
-    def fullreport(self,paths, export=None):
+    def full_report(self, paths, export=None):
         """Returns all reports available"""
-        self.reportCountDuplicates(paths)
-        self.reportListDuplicates(paths, export)
-        self.reportAnalysisDuplicates()
+        self.report_count_duplicates(paths)
+        self.report_list_duplicates(paths, export)
+        self.report_analysis_duplicates()
 
 
-    def reportCountDuplicates(self, paths):
-        self.duplicatedFilesCount = len(self.DB.getDuplicates(paths).fetchall())
+    def report_count_duplicates(self, paths):
+        self.duplicatedFilesCount = len(self.DB.getDuplicatesWithFilesAndHashes(paths).fetchall())
         print("")
         print("--------------------------------------")
         print("Number of duplicated files are: %i" % (self.duplicatedFilesCount))
 
-    def reportListDuplicates(self, paths, export=None):
+    def report_list_duplicates(self, paths, export=None):
         duplicatedFilesList = dict()
         duplicatedFilesSize = 0
         if export is not None:  f = open(export, 'w')
         print("")
         print("--------------------------------------")
         print("Duplicate files: ")
-        for r in self.DB.getDuplicates(paths).fetchall():
+        for r in self.DB.getDuplicatesWithFilesAndHashes(paths, "TRUE", "hashes.hashesid").fetchall():
             hash = self.DB.getDuplicate(r['hashesid'], paths).fetchall()
             if len(hash) > 1:
                 files = []
@@ -49,7 +49,7 @@ class Report(object):
                     if c > 0: duplicatedFilesSize += r['bytes']
 
 
-                line = "%s\t%s\t%s" % (r['hash'], self.humanvalue(r['bytes']), " ".join(files))
+                line = "%s\t%s\t%s" % (r['hash'], self.human_value(r['bytes']), " ".join(files))
                 duplicatedFilesList[r['hash']] = { "hash":r['hash'], "files":files, "size":r['bytes'] }
 
                 print(line)
@@ -60,18 +60,18 @@ class Report(object):
         self.duplicatedFilesSize = duplicatedFilesSize
 
 
-    def reportAnalysisDuplicates(self):
+    def report_analysis_duplicates(self):
         print("--------------------------------------")
         print("Liten3 Full Reporting")
         print("Duplicate files found: %i" % (self.duplicatedFilesCount))
-        print("Total space wasted: %s " % (self.humanvalue(self.duplicatedFilesSize)))
+        print("Total space wasted: %s " % (self.human_value(self.duplicatedFilesSize)))
 
         print("")
         print("To delete files, run liten3 in interactive mode: python liten3.py -i")
 
 
 
-    def humanvalue(self, value):
+    def human_value(self, value):
         """returns a human value for a file in MegaBytes"""
         if value > 1024 * 1024 * 1024:
             return "%.2fGB" % (value / 1024 / 1024 / 1024 )
