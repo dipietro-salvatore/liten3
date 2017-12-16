@@ -15,8 +15,6 @@ class Report(object):
         if self.full:
             self.full_report()
 
-    # def setDebug(self, debug=False):
-    #     self.debug=debug
 
     def full_report(self, paths, export=None):
         """Returns all reports available"""

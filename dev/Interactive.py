@@ -33,10 +33,10 @@ Starting a new Interactive Session.
 * Confirm your selections at the end.\n
 -------------------------------------------------------\n""")
 
-        for_deletion = list()
+        forDeletion = list()
 
         try:
-            for r in self.DB.getDuplicatesWithFilesAndHashes(paths).fetchall():
+            for r in self.DB.getDuplicatesWithFilesAndHashes(paths, groupBy="duplicates.hashesid").fetchall():
                 hash = self.DB.getDuplicate(r['hashesid'], paths).fetchall()
                 if len(hash) > 1:
                     filepaths = list([""])
@@ -47,17 +47,17 @@ Starting a new Interactive Session.
                             print("%d \t %s" % (count, i['path']))
                             count += 1
                     if self.autoDelete :
-                        files = self.are_files_in_folder(filepaths)
+                        files = self.areFilesInFolder(filepaths)
                         if files is not None:
-                            for_deletion = for_deletion + files
+                            forDeletion = forDeletion + files
 
                 if not self.autoDelete:
                     try:
                         answer = True
                         while answer:
                             choose = int(input("Choose a number to delete (Enter to skip): "))
-                            if filepaths[choose] not in for_deletion:
-                                for_deletion.append(filepaths[choose])
+                            if filepaths[choose] not in forDeletion:
+                                forDeletion.append(filepaths[choose])
                             if not choose:
                                 answer = False
 
@@ -65,7 +65,7 @@ Starting a new Interactive Session.
                         print("--------------------------------------------------\n")
 
             print("Files selected for complete removal:\n")
-            for selection in for_deletion:
+            for selection in forDeletion:
                 if selection:
                     print(selection)
             print("\n")
@@ -78,11 +78,12 @@ Starting a new Interactive Session.
             if not self.dryrun:
                 confirm = input("Type Yes to confirm (No to cancel): ")
                 if confirm in ["Yes", "yes", "Y", "y"]:
-                    for selection in for_deletion:
+                    for selection in forDeletion:
                         if selection:
                             try:
                                 print("Removing file:\t %s" % selection)
                                 os.remove(selection)
+                                self.DB.deleteFilePath(selection)
                             except OSError:
                                 "Could not delete:\t %s \nCheck Permissions" % selection
             else:
@@ -96,27 +97,17 @@ Starting a new Interactive Session.
         self.autoDelete = True
         self.deletePaths = deletePaths
 
-    def are_files_in_folder(self, filesPath):
-        founded = list()
+    def areFilesInFolder(self, filesPath):
         toDelete = list()
 
         for file in filesPath:
             if file != "": #not empty content
-                foundedInFolders = list()
                 for folder in self.deletePaths:
                     if file.startswith(folder):
                         toDelete.append(file)
-                        foundedInFolders.append(True)
-                    else:
-                        foundedInFolders.append(False)
-
-                if True in foundedInFolders:
-                    founded.append(True)
-                else:
-                    founded.append(False)
 
         #If there is a FALSE at least one copy remains in the system
-        if False in founded:
+        if len(toDelete) < len(filesPath):
             return toDelete
         else:
             return None

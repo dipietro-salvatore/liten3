@@ -16,12 +16,8 @@ which gives you the ability to determine what files to delete.
 """
 
 
-import sys
-import os
-import pathlib
-import sqlite3
-import time
-import hashlib
+import sys, multiprocessing, os,pathlib
+import sqlite3, time, hashlib
 from optparse import Option, OptionParser
 from progressbar import Bar, Percentage, ProgressBar
 from multiprocessing.pool import ThreadPool
@@ -36,12 +32,16 @@ debug = False
 
 
 
+################# LINE40 #############################
 
 
 
 
 
-class DbWork(object):
+
+
+
+class Db(object):
     """ All the Database work happens here """
 
     def __init__(self, dbfilename, threads, debug=False):
@@ -49,6 +49,9 @@ class DbWork(object):
         self.database = dbfilename
         self.connection()
         self.threads = threads
+        self.hashesClass = None
+        self.cacheFilesClass = None
+        self.cacheHashesClass = None
 
     def connection(self):
         createtables = False
@@ -85,12 +88,13 @@ class DbWork(object):
 
         self.commit()
 
-    # def are_paths_wildcard(self, paths):
-    #     """ Check if a list of paths have the wildcard in the end of it (/%). If not it will add it."""
-    #     for i in range(len(paths)):
-    #         paths[i] = self.is_path_wildcard(paths[i])
-    #
-    #     return paths
+    def arePathsWildcard(self, paths):
+        """ Check if a list of paths have the wildcard in the end of it (/%). If not it will add it."""
+        if not isinstance(paths, list): paths = [paths]
+        for i in range(len(paths)):
+            paths[i] = self.isPathWildcard(str(paths[i]))
+
+        return paths
 
     def isPathWildcard(self, path):
         path = path.replace("'", "''")
@@ -139,78 +143,113 @@ class DbWork(object):
     #     if getHash == True and isHashed == False: self.addHash(path)  # get Hash
 
 
-    def getFilesInPath(self, path):
-        path = self.isPathWildcard(path)
+    def getFilesInPaths(self, paths):
 
-        q = "SELECT filesid,path,bytes,hashesid FROM files WHERE path LIKE ?"
-        return self.execQuery(q,(path,))
+        paths = self.arePathsWildcard(paths)
+        if paths is None:
+            q = "SELECT filesid,path,bytes,hashesid FROM files"
+        else:
+            q = "SELECT filesid,path,bytes,hashesid FROM files WHERE " + " ".join(self.getFilePathsQueryList(paths))
 
-    def insertFiles(self, pathFolder, filesDetailQueue, getHash=False):
-        """Inserts the files information into the database"""
+        return self.execQuery(q)
 
-        allFiles = self.getFilesInPath(pathFolder).fetchall()
-        filesDict = dict()
+
+    def fillCacheFilesInPaths(self, paths):
+        allFiles = self.getFilesInPaths(paths).fetchall()
         for file in allFiles:
-            filesDict[file['path']] = {'filesid':file['filesid'], 'path':file['path'], 'size':file['bytes'], 'hashesid':file['hashesid']}
+            self.cacheFilesClass.add(file['path'], file['filesid'], file['bytes'], file['hashesid'])
 
-        insertQuery = "INSERT INTO files (path, bytes, hashesid, isUpdated, lastupdate) VALUES (?, ?, NULL, 'TRUE', datetime())"
-        updateQuery = "UPDATE files SET bytes=?, isUpdated='TRUE', lastupdate=datetime() WHERE filesid=?"
+
+    def insertFiles(self, pathFolder, filesDetailQueue, getHash=False, toprint=False):
+        """Inserts the files information into the database"""
         insertQueryValuesList = list()
         updateQueryValuesList = list()
-        ci=0
-        cu=0
 
         while not filesDetailQueue.empty():
             file = filesDetailQueue.get()
-            if file.path in filesDict:  #Update
-                cu+=1
-                value = (file.size, filesDict[file.path]['filesid'],)
+            if file.path in self.cacheFilesClass.files:
+                #Update
+                value = (file.size, self.cacheFilesClass.getFilesid(file.path),)
                 updateQueryValuesList.append( value )
-                self.execQuery(updateQuery, value)
-                if filesDict[file.path]['size'] != file.size and filesDict[file.path]['hashesid'] != None: self.addHash(file.path)
-            else:  # Insert
-                ci+=1
+                if not self.cacheFilesClass.sameSize(file.path, file.size) and self.cacheFilesClass.getHashesid(file.path) != None:
+                    self.addHash(file.path)
+            else:
+                # Insert
                 value = (file.path, file.size,)
                 insertQueryValuesList.append( value )
-                self.execQuery(insertQuery, value)
                 if getHash: self.addHash(file.path)
 
-        # print("INSERT: "+str(len(insertQueryValuesList))+" "+str(ci))
-        # print("UPDATE: " + str(len(updateQueryValuesList))+" "+str(cu))
-        self.commit()
 
-    def insert_hash(self, hash):
+        insertQuery = "INSERT INTO files (path, bytes, hashesid, isUpdated, lastupdate) VALUES (?, ?, NULL, 'TRUE', datetime())"
+        updateQuery = "UPDATE files SET bytes=?, isUpdated='TRUE', lastupdate=datetime() WHERE filesid=?"
+
+        # self.execQueriesProgress(insertQuery, insertQueryValuesList, "Insert Files: ")
+        # self.execQueriesProgress(updateQuery, updateQueryValuesList, "Update Files: ")
+
+        self.execQueryMany(insertQuery, insertQueryValuesList, toprint, "Insert Files: ")
+        self.execQueryMany(updateQuery, updateQueryValuesList, toprint, "Update Files: ")
+
+
+    def insertHash(self, hash):
         """Inserts the hash into the database"""
         record = self.searchHash(hash).fetchone()
         if record == None:
             self.execQuery("INSERT INTO hashes (hash, lastupdate) VALUES(?, datetime())", (hash,))
-            return self.c.lastrowid
+            hashesid =self.c.lastrowid
+            self.cacheHashesClass.add(hash, hashesid)
+            return hashesid
 
         return record['hashesid']
 
+    def fillCacheAllHashes(self, paths):
+        for hash in self.getHashes(paths).fetchall():
+            self.cacheHashesClass.add(hash['hash'], hash['hashesid'])
 
-    def insertHashes(self, hashesQueue, paths=None):
+
+
+    def insertHashes(self, hashesQueue, paths=None, toprint=False):
         """Inserts the hashes into the database"""
 
-        allHashesDict=dict()
-        allHashes=self.getHashes(paths)
-        for hash in allHashes.fetchall():
-            allHashesDict[hash['hash']]={'hashesid':hash['hashesid'], 'hash':hash['hash']}
-
+        updateHashToFileIdValueList = list()
+        updateHashToFilePathValueList = list()
         while not hashesQueue.empty():
             hash = hashesQueue.get()
-            if hash.hash in allHashesDict:  # Update
-                self.addHashToFile(allHashesDict[hash.hash]['hashesid'], hash.path)
-            else:  # Insert
-                hashesid = self.insert_hash(hash.hash)
-                allHashesDict[hash.hash]={'hashesid':hashesid, 'hash':hash.hash}
-                self.addHashToFile(hashesid, hash.path)
 
-        self.commit()
+            if hash.hash not in self.cacheHashesClass.hashes:
+                self.insertHash(hash.hash)
+
+            if hash.path in self.cacheFilesClass.files:
+                updateHashToFileIdValueList.append((self.cacheHashesClass.getHashesid(hash.hash), self.cacheFilesClass.getFilesid(hash.path)))
+            else:
+                updateHashToFilePathValueList.append((self.cacheHashesClass.getHashesid(hash.hash), hash.path))
+
+            # else:
+            #     # Insert
+            #     hashesid = self.insertHash(hash.hash)
+            #
+            #     if hash.path in self.cacheFiles.files:
+            #         updateHashToFileIdValueList.append((hashesid, self.cacheFilesInPathsToDict[hash.path]['filesid']))
+            #     else:
+            #         updateHashToFilePathValueList.append((self.allHashesDict[hash.hash]['hashesid'], hash.path))
+
+        # self.commit()
+
+        updatePathQuery="UPDATE files SET hashesid = ? WHERE path = ? "
+        updateIdQuery = "UPDATE files SET hashesid = ? WHERE filesid = ? "
+        # self.execQueriesProgress(updateQuery, updateHashToFileValueList, "Insert Hashes record in DB. Number: ")
+
+        self.execQueryMany(updateIdQuery, updateHashToFileIdValueList, toprint, "Insert Hashes record in DB. Number: ")
+        self.execQueryMany(updatePathQuery, updateHashToFilePathValueList, toprint, "Insert Hashes record in DB. Number: ")
+
 
     def addHashToFile(self, hashesid, path):
         self.execQuery("UPDATE files SET hashesid = ? WHERE path = ? ", (hashesid, path))
         return self.c.lastrowid
+
+    # def addHashToFileMany(self, hashesid, path):
+    #     # if not hasattr(self,'updateHashToFileValueList'):  self.updateHashToFileValueList= list()
+    #     self.updateHashToFileValueList.append((hashesid, path))
+    #     # self.execQuery("UPDATE files SET hashesid = ? WHERE path = ? ", (hashesid, path))
 
     def searchFile(self, path):
         values = (path,)
@@ -244,17 +283,17 @@ class DbWork(object):
             for r in allsamesizeresults:
                 sizeList.append(r['bytes'])
 
-            sameSizeQuery = " ".join(["SELECT path FROM files WHERE"] + command2 + ["AND bytes IN ( "+str(sizeList).replace('[','').replace(']','')+" )"])
+            sameSizeQuery = " ".join(["SELECT path FROM files WHERE"] + command2 +
+                                     ["AND", "bytes IN ( "+str(sizeList).replace('[','').replace(']','')+" )"]+
+                                     ["AND", "hashesid IS NULL"])
             samesize = self.execQuery(sameSizeQuery).fetchall()
             for r in samesize:
                 self.addHash(Hashes, r['path'])
 
     def findAndInsertDuplicates(self,paths):
-        print("\nLooking for duplicated files")
         duplicatesClass = Duplicates()
         duplicates = self.findDuplicates(paths)
-        # self.insertDuplicates(duplicates)
-        print(len(duplicates))
+
         insertsList,updateList = duplicatesClass.insertOrUpdate(self.getDuplicates(paths), duplicates)
         self.insertDuplicates(insertsList, False)
         self.updateDuplicatesIsUpdated(updateList)
@@ -312,8 +351,10 @@ class DbWork(object):
 
 
     def insertDuplicates(self, duplicatesList, update=True):
+        if len(duplicatesList) == 0:
+            return
 
-        print("Insert Duplicate files. Number of files: %i" % (len(duplicatesList)))
+        print("\n\t Insert Duplicate files. Number of files: %i" % (len(duplicatesList)))
         pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=len(duplicatesList)).start()
         pbarCount = 0
 
@@ -323,7 +364,7 @@ class DbWork(object):
             pbar.update(pbarCount)
 
         pbar.finish()
-        print("\n")
+
 
     def insertDuplicate(self, hashesid, filesid, update=True):
         """ Add Duplicate Record """
@@ -368,7 +409,7 @@ class DbWork(object):
             group = "GROUP BY "+str(groupBy)
             command3 = [group]
         command = command1 + command2 + command3
-
+        # print(" ".join(command))
         return self.execQuery(" ".join(command))
 
     def getDuplicate(self, hashesid, paths):
@@ -380,8 +421,8 @@ class DbWork(object):
         if self.debug: print(" ".join(command))
         return self.execQuery(" ".join(command), (hashesid,))
 
-    def addHash(self, hashesClass, path):
-        hashesClass.addFile(path)
+    def addHash(self, path):
+        self.hashesClass.addFile(path)
 
     def getFilePathsQueryList(self, paths):
         if isinstance(paths, str): paths = [paths]
@@ -418,6 +459,17 @@ class DbWork(object):
         self.execQuery(
             "DELETE FROM duplicates WHERE isUpdated = 'FALSE'")  # DELETE DUPLICATE record with ISUPDATE = FALSE
 
+    def deleteFilePath(self, filepath):
+        querySelectFile="SELECT filesid FROM files WHERE path LIKE ?"
+        fileid = self.execQuery(querySelectFile, (filepath,))
+        for filesid in fileid.fetchall():
+            fileid = filesid['filesid']
+
+            values = (fileid,)
+            self.execQuery("DELETE FROM duplicates WHERE filesid = ?", values)
+            self.execQuery("DELETE FROM files WHERE filesid = ?", values)
+
+
     def cleanUnusedHashes(self):
         # TODO
         pass
@@ -434,9 +486,94 @@ class DbWork(object):
         else:
             return self.c.execute(query, values)
 
+    def execQueriesProgress(self, query, valuesList, dispMsg="Number of queries: "):
+        print("\n", dispMsg, len(valuesList))
+        pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=len(valuesList)).start()
+        pbarCount = 0
+        for value in valuesList:
+            self.execQuery(query, value)
+            pbarCount += 1
+            pbar.update(pbarCount)
+
+        pbar.finish()
+        self.commit()
+
+    def execQueryMany(self, query, valuesList, toprint=False, dispMsg="Number of queries: "):
+        if len(valuesList) > 0:
+            if self.debug: print(query + " " + str(valuesList))
+            # print("\n"+query + " " + str(len(valuesList)))
+            chuncks=list(self.execQueryManyChunks(valuesList, 50))
+
+            if toprint: print("\n", dispMsg, len(chuncks))
+            if toprint: pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=len(chuncks)).start()
+            if toprint: pbarCount =0
+
+            for partialValuesList in chuncks:
+                # print(partialValuesList)
+                self.c.executemany(query, partialValuesList)
+                if toprint: pbarCount += 1
+                if toprint: pbar.update(pbarCount)
+
+                if toprint: pbar.finish()
+            # self.commit()
+
+    def execQueryManyChunks(self, valuesList, chunckSize):
+        """Yield successive n-sized chunks from l."""
+        for i in range(0, len(valuesList), chunckSize):
+            yield valuesList[i:i + chunckSize]
+
     def close(self):
         self.commit()
         self.conn.close()
+
+
+
+
+
+
+class CacheFiles():
+
+    def __init__(self):
+        self.files = dict()
+
+    def add(self, path, filesid, bytes, hashesid=None):
+        self.files[path] = {'filesid': filesid, 'path': path, 'size': bytes, 'hashesid': hashesid}
+
+    def search(self, path):
+        return self.files[path]
+
+    def getFilesid(self, path):
+        return self.search(path)['filesid']
+
+    def getHashesid(self, path):
+        return self.files[path]['hashesid']
+
+    def sameSize(self, path, size):
+        if self.files[path]['size'] == size:
+            return True
+        else:
+            return False
+
+    def __len__(self):
+        return len(self.files)
+
+
+class CacheHashes():
+
+    def __init__(self):
+        self.hashes = dict()
+
+    def add(self, hash, hashid):
+        self.hashes[hash] = {'hashid': hashid, 'hash': hash}
+
+    def search(self, hash):
+        return self.hashes[hash]
+
+    def getHashesid(self, hash):
+        return self.search(hash)['hashid']
+
+    def __len__(self):
+        return len(self.hashes)
 
 
 class Files(object):
@@ -448,53 +585,57 @@ class Files(object):
         self.ThreadNum = threads
         self.debug = False
         self.filesList = list()
-        self.filesDetailsQueue = Queue()
+        self.filesDetailsQueue = Queue(0)
         self.pbar = None
         self.pbarCount = 0
 
 
     def findFiles(self):
         """Walks through and entire directory to find all the files."""
-
-        print("\n")
-        print("Search files in folder: %s." % (self.path))
-
         for root, dir, files in os.walk(self.path):
             for file in files:
                 absolute = os.path.join(root, file)
                 if os.path.isfile(absolute) and os.path.islink(absolute) == False:
                     self.filesList.append(absolute)
 
-        print("\n")
-        print("Number of files to scan : %i" % len(self.filesList))
+        if len(self.filesList) == 0:
+            return self.filesDetailsQueue
+
+        print("\n\t Number of files to scan : %i" % len(self.filesList))
         self.pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=len(self.filesList)).start()
         self.pbarCount = 0
-
 
         p = ThreadPool(self.ThreadNum)
         p.map(self.getFileDetails, self.filesList)
         p.close()
 
         self.pbar.finish()
-        print("\n")
 
         return self.filesDetailsQueue
 
 
     def getFileDetails(self, path):
-        size = os.path.getsize(path)
-        if size > self.size:
-            self.filesDetailsQueue.put(FileDetail(path,size))
-            if self.debug: print("File %s: %s" % (str(path), str(size)))
+        try:
+            path = str(path).strip()
+            if path:    # path not empty
+                size = os.path.getsize(path)
+                if size > self.size:
+                    self.filesDetailsQueue.put(FileDetail(path,size))
+                    if self.debug: print("File %s: %s" % (str(path), str(size)))
+        except:
+            print("Error to open the file", path)
 
         self.pbarCount += 1
         self.pbar.update(self.pbarCount)
 
 
+
+
+
 class FileDetail():
     def __init__(self, path, size):
-        self.path = path
-        self.size = size
+        self.path = str(path).strip()
+        self.size = int(size)
 
     def __str__(self):
         return str(str(self.path)+" "+str(self.size))
@@ -506,29 +647,37 @@ class Hashes():
     def __init__(self, threadsNum=3, debug=False):
         self.debug = debug
         self.filesList = list()
-        self.hashesQueue = Queue()
+        self.hashesQueue = Queue(0)
         self.ThreadNum = threadsNum
         self.pbarCount = 0
+        self.maxsizehash = None
 
     def addFile(self, path):
         self.filesList.append(path)
 
-    def calcHashes(self, maxsizehash=0):
-        self.maxsizehash = maxsizehash
-        print("\n\n")
-        print("Calculate Hash. Number of files: %i" % (len(self.filesList)))
+    def sizeFiles(self):
+        return len(self.filesList)
+
+    def calcHashes(self):
+        if len(self.filesList) == 0:
+            return self.hashesQueue
+
+        print("\n\t Calculate Hash. Number of files: %i" % (len(self.filesList)))
         self.pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=len(self.filesList)).start()
 
         p = ThreadPool(self.ThreadNum)
-        p.map(self.calcHash, self.filesList)
+        p.map(self._calcHash, self.filesList)
         p.close()
 
         self.pbar.finish()
-        print("\n")
-
         return self.hashesQueue
 
-    def calcHash(self, path):
+
+    def _calcHash(self, path):
+        # To give time to the DB to process the insert hashes queries and don't accumulate them into memory
+        while self.hashesQueue.qsize() > 1000:
+            time.sleep(2)
+
         if self.debug: print("Calculate SHA hash of the file: " + str(path))
         if self.maxsizehash == 0:  # hash all file
             readfile = open(path, 'rb', buffering=0).read()
@@ -697,10 +846,10 @@ Starting a new Interactive Session.
 * Confirm your selections at the end.\n
 -------------------------------------------------------\n""")
 
-        for_deletion = list()
+        forDeletion = list()
 
         try:
-            for r in self.DB.getDuplicatesWithFilesAndHashes(paths).fetchall():
+            for r in self.DB.getDuplicatesWithFilesAndHashes(paths, groupBy="duplicates.hashesid").fetchall():
                 hash = self.DB.getDuplicate(r['hashesid'], paths).fetchall()
                 if len(hash) > 1:
                     filepaths = list([""])
@@ -711,17 +860,17 @@ Starting a new Interactive Session.
                             print("%d \t %s" % (count, i['path']))
                             count += 1
                     if self.autoDelete :
-                        files = self.are_files_in_folder(filepaths)
+                        files = self.areFilesInFolder(filepaths)
                         if files is not None:
-                            for_deletion = for_deletion + files
+                            forDeletion = forDeletion + files
 
                 if not self.autoDelete:
                     try:
                         answer = True
                         while answer:
                             choose = int(input("Choose a number to delete (Enter to skip): "))
-                            if filepaths[choose] not in for_deletion:
-                                for_deletion.append(filepaths[choose])
+                            if filepaths[choose] not in forDeletion:
+                                forDeletion.append(filepaths[choose])
                             if not choose:
                                 answer = False
 
@@ -729,7 +878,7 @@ Starting a new Interactive Session.
                         print("--------------------------------------------------\n")
 
             print("Files selected for complete removal:\n")
-            for selection in for_deletion:
+            for selection in forDeletion:
                 if selection:
                     print(selection)
             print("\n")
@@ -742,11 +891,12 @@ Starting a new Interactive Session.
             if not self.dryrun:
                 confirm = input("Type Yes to confirm (No to cancel): ")
                 if confirm in ["Yes", "yes", "Y", "y"]:
-                    for selection in for_deletion:
+                    for selection in forDeletion:
                         if selection:
                             try:
                                 print("Removing file:\t %s" % selection)
                                 os.remove(selection)
+                                self.DB.deleteFilePath(selection)
                             except OSError:
                                 "Could not delete:\t %s \nCheck Permissions" % selection
             else:
@@ -760,30 +910,22 @@ Starting a new Interactive Session.
         self.autoDelete = True
         self.deletePaths = deletePaths
 
-    def are_files_in_folder(self, filesPath):
-        founded = list()
+    def areFilesInFolder(self, filesPath):
         toDelete = list()
 
         for file in filesPath:
             if file != "": #not empty content
-                foundedInFolders = list()
                 for folder in self.deletePaths:
                     if file.startswith(folder):
                         toDelete.append(file)
-                        foundedInFolders.append(True)
-                    else:
-                        foundedInFolders.append(False)
-
-                if True in foundedInFolders:
-                    founded.append(True)
-                else:
-                    founded.append(False)
 
         #If there is a FALSE at least one copy remains in the system
-        if False in founded:
+        if len(toDelete) < len(filesPath):
             return toDelete
         else:
             return None
+
+################# LINE40 #############################
 
 
 
@@ -807,36 +949,15 @@ class MultipleOption(Option):
             Option.take_action(self, action, dest, opt, value, values, parser)
 
 
+def timestr():
+    return str(time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()))
 
-
-
-def main():
-    """Parse the options"""
-
-    p = OptionParser(option_class=MultipleOption,  usage='usage: %prog [OPTIONS]')
-
-    p.add_option('--open', '-o', help="Use a specific database")
-    p.add_option('--tmpDB', '-t', action="store_true", help="Use a temporary in-memory database")
-    p.add_option('--path', '-p', action="extend", type="string", help="Supply a path to search")
-    p.add_option('--delete', '-x', action="extend", type="string", help="Delete all the duplicates files in the provided path")
-    p.add_option('--size', '-s', help="Search by Size in MB. By defaults to 0")
-    p.add_option('--export', '-e', help="Export the list of duplicate file into text file")
-    p.add_option('--maxsizehash', '-m', help="Set the maximum size in MB to hash.")
-    p.add_option('--threads', '-u', help="Number of threads to use. By defaults use the same number of CPU cores")
-    p.add_option('--hashall','-a', action="store_true",help="Hash all the files. By defauls it hash only files with the same size.")
-    p.add_option('--dryrun', '-d', action="store_true", help="Does not delete anything. Use ONLY with interactive mode")
-    p.add_option('--report', '-r', action="store_true", help="Generates a report from a previous run")
-    p.add_option('--interactive', '-i', action="store_true", help='Interactive mode to delete files')
-    p.add_option('--searchduplicate', '-D', action="store_true", help='Search duplicate files only')
-    options, arguments = p.parse_args()
-
-
+def checkOptions(options):
 
     """ Test options"""
     if options.open and options.tmpDB:
         sys.stderr.write("Do you want to use a temporary database (--tmpDB) or not?")
         sys.exit(1)
-
 
 
     """ Setting  """
@@ -859,6 +980,7 @@ def main():
             absolutePath.append(os.path.abspath(i))
         options.path = absolutePath
         options.searchduplicate = True
+        options.report = options.path
 
     if options.delete and len(options.delete) > 0:
         absolutePath = list()
@@ -872,18 +994,48 @@ def main():
     else:
         options.threads = int(cpu_count())
 
+
+    return options
+
+
+def main():
+    """Parse the options"""
+    p = OptionParser(option_class=MultipleOption,  usage='usage: %prog [OPTIONS]')
+    p.add_option('--open', '-o', help="Use a specific database")
+    p.add_option('--tmpDB', '-t', action="store_true", help="Use a temporary in-memory database")
+    p.add_option('--path', '-p', action="extend", type="string", help="Supply a path to search")
+    p.add_option('--delete', '-x', action="extend", type="string", help="Delete all the duplicates files in the provided path")
+    p.add_option('--size', '-s', help="Search by Size in MB. By defaults to 0")
+    p.add_option('--export', '-e', help="Export the list of duplicate file into text file")
+    p.add_option('--maxsizehash', '-m', help="Set the maximum size in MB to hash.")
+    p.add_option('--threads', '-u', help="Number of threads to use. By defaults use the same number of CPU cores")
+    p.add_option('--hashall','-a', action="store_true",help="Hash all the files. By defauls it hash only files with the same size.")
+    p.add_option('--dryrun', '-d', action="store_true", help="Does not delete anything. Use ONLY with interactive mode")
+    p.add_option('--report', '-r', action="store_true", help="Generates a report from a previous run")
+    p.add_option('--interactive', '-i', action="store_true", help='Interactive mode to delete files')
+    p.add_option('--searchduplicate', '-D', action="store_true", help='Search duplicate files only')
+    options, arguments = p.parse_args()
+    options = checkOptions(options)
+
     #DB
     dbfilename = str(pathlib.Path.home()) + "/.liten3.sqlite"
     if options.open:  dbfilename = os.path.abspath(options.open)
     if options.tmpDB: dbfilename = ':memory:'
-    DB = DbWork(dbfilename, options.threads)
-    DB.debug = debug
+
+    dbClass = Db(dbfilename, options.threads)
+    dbClass.debug = debug
+
+    hashesClass = Hashes(options.threads)
+    hashesClass.maxsizehash = options.maxsizehash
+    dbClass.hashesClass = hashesClass
+
+    cacheFilesClass = CacheFiles();  cacheHashesClass = CacheHashes()
+    dbClass.cacheFilesClass = cacheFilesClass;  dbClass.cacheHashesClass = cacheHashesClass
 
 
 
     """ Start program """
     if options.path:
-        options.report = options.path
         for path in options.path:
             if not os.path.isdir(path):
                 sys.stderr.write("Search path does not exist or is not a directory: %s\n" % path)
@@ -893,28 +1045,64 @@ def main():
             try:
                 filesClass = Files(path, options.threads, options.size)
                 filesClass.debug = debug
-                DB.setIsUpdated(path)
-                filesDetailsQueue = filesClass.findFiles()
-                DB.insertFiles(path, filesDetailsQueue, options.hashall)
+
+                print("%s\t Load in memory file details for path %s" %(timestr(), path))
+                dbClass.fillCacheFilesInPaths(path)
+                dbClass.setIsUpdated(path)
+
+                print("%s\t Search files in folder: %s." % (timestr(), path))
+                filesDetailsProcess = multiprocessing.Process(target=filesClass.findFiles)
+                filesDetailsProcess.start()
+
+                while filesDetailsProcess.is_alive():
+                    dbClass.insertFiles(path, filesClass.filesDetailsQueue, options.hashall)
+
+                print("%s\t Insert in DB files in folder: %s." % (timestr(), path))
+                dbClass.insertFiles(path, filesClass.filesDetailsQueue, options.hashall)
+
+                filesDetailsProcess.terminate()
+                dbClass.commit()
+
 
             except (KeyboardInterrupt, SystemExit):
-                print("\nExiting nicely from Liten3...")
+                print("Exiting nicely from Liten3...")
                 sys.exit(1)
 
-        DB.rmOldFiles(options.path)
-        hashesClass = Hashes(options.threads)
-        DB.findFilesWithSameSize(options.path, hashesClass, options.hashall)
 
-        hashesQueue = hashesClass.calcHashes(options.maxsizehash)
-        DB.insertHashes(hashesQueue, None)
+        print("%s\t Clean DB files from old files." % (timestr()))
+        dbClass.rmOldFiles(options.path)
+
+        print("%s\t Looking for Files with same size" % (timestr()))
+        dbClass.findFilesWithSameSize(options.path, hashesClass, options.hashall)
+
+        print("%s\t Load in memory hashes for path %s" % (timestr(), str(options.path)))
+        dbClass.fillCacheFilesInPaths(options.path)
+        dbClass.fillCacheAllHashes(options.path)
+
+        if hashesClass.sizeFiles() > 0:
+            print("%s\t Calculate hashes for files in path %s" % (timestr(), str(options.path)))
+            calcHashesProcess = multiprocessing.Process(target=hashesClass.calcHashes)
+            calcHashesProcess.start()
+
+            while calcHashesProcess.is_alive():
+                dbClass.insertHashes(hashesClass.hashesQueue, options.path, False)
+
+            print("%s\t Insert in DB hashes in folder: %s." % (timestr(), str(options.path)))
+            dbClass.insertHashes(hashesClass.hashesQueue, options.path, False)
+
+            calcHashesProcess.terminate()
+
+        dbClass.commit()
+
 
     if options.searchduplicate:
-        if not options.path: options.path = "/"
-        DB.findAndInsertDuplicates(options.path)
+        if not options.path: options.path = '/'
+        print("%s\t Looking for Duplicated files with same Hash." %(timestr()))
+        dbClass.findAndInsertDuplicates(options.path)
 
 
     if options.report:
-        reportClass = Report(DB)
+        reportClass = Report(dbClass)
         if not options.path: options.path = "/"
         if options.export:
             reportClass.full_report(options.path, options.export)
@@ -923,11 +1111,11 @@ def main():
 
 
     if options.interactive or options.delete:
-        if options.dryrun:
-            interactiveClass = Interactive(DB, dryrun=True)
-        else:
-            interactiveClass = Interactive(DB)
+        interactiveClass = Interactive(dbClass)
         interactiveClass.debug = debug
+        if options.dryrun:
+            interactiveClass.dryrun=True
+
 
         if options.delete: interactiveClass.delete(options.delete)
         if not options.path:
@@ -938,7 +1126,7 @@ def main():
 
 
     """ EXIT """
-    DB.close()
+    dbClass.close()
     sys.exit(0)
 
 
