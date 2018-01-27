@@ -2,7 +2,7 @@ from multiprocessing.pool import ThreadPool
 from multiprocessing import Queue, current_process
 import multiprocessing
 from progressbar import Bar, Percentage, ProgressBar
-import hashlib, time
+import hashlib, time, logging
 
 
 
@@ -26,7 +26,7 @@ class Hashes():
         if len(self.filesList) == 0:
             return self.hashesQueue
 
-        print("\n\t Calculate Hash. Number of files: %i" % (len(self.filesList)))
+            logging.info("Calculate Hash. Number of files: %i" % (len(self.filesList)))
         self.pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=len(self.filesList)).start()
 
         p = ThreadPool(self.ThreadNum)
@@ -42,7 +42,7 @@ class Hashes():
         while self.hashesQueue.qsize() > 1000:
             time.sleep(2)
 
-        if self.debug: print("Calculate SHA hash of the file: " + str(path))
+        logging.debug("Calculate SHA hash of the file: " + str(path))
         if self.maxsizehash == 0:  # hash all file
             readfile = open(path, 'rb', buffering=0).read()
         else:

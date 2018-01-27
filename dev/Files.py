@@ -1,4 +1,4 @@
-import os, time
+import os, time, logging
 from multiprocessing.pool import ThreadPool
 from multiprocessing import Queue
 from progressbar import Bar, Percentage, ProgressBar
@@ -29,7 +29,7 @@ class Files(object):
         if len(self.filesList) == 0:
             return self.filesDetailsQueue
 
-        print("\n\t Number of files to scan : %i" % len(self.filesList))
+        logging.info("Number of files to scan : %i" % len(self.filesList))
         self.pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=len(self.filesList)).start()
         self.pbarCount = 0
 
@@ -49,9 +49,9 @@ class Files(object):
                 size = os.path.getsize(path)
                 if size > self.size:
                     self.filesDetailsQueue.put(FileDetail(path,size))
-                    if self.debug: print("File %s: %s" % (str(path), str(size)))
+                    logging.debug("File %s: %s" % (str(path), str(size)))
         except:
-            print("Error to open the file", path)
+            logging.error("Error to open the file", path)
 
         self.pbarCount += 1
         self.pbar.update(self.pbarCount)

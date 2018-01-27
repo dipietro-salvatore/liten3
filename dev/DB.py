@@ -1,4 +1,4 @@
-import os, time
+import os, time, logging
 import sqlite3
 
 from progressbar import Bar, Percentage, ProgressBar
@@ -31,7 +31,7 @@ class Db(object):
             self.createTables()
 
         if self.debug:
-            print("Drop duplicates table.")
+            logging.debug("Drop duplicates table.")
             self.execQuery('DELETE FROM duplicate;')
             self.execQuery('VACUUM ;')
 
@@ -135,7 +135,7 @@ class Db(object):
                 #Update
                 value = (file.size, self.cacheFilesClass.getFilesid(file.path),)
                 updateQueryValuesList.append( value )
-                if not self.cacheFilesClass.sameSize(file.path, file.size) and self.cacheFilesClass.getHashesid(file.path) != None:
+                if not self.cacheFilesClass.sameSize(file.path, file.size) or self.cacheFilesClass.getHashesid(file.path) is None:
                     self.addHash(file.path)
             else:
                 # Insert
@@ -162,7 +162,7 @@ class Db(object):
 
         return record['hashesid']
 
-    def fillCacheAllHashes(self, paths):
+    def fillCacheAllHashes(self, paths=None):
         for hash in self.getHashes(paths).fetchall():
             self.cacheHashesClass.add(hash['hash'], hash['hashesid'])
 
@@ -210,7 +210,7 @@ class Db(object):
             query = "SELECT * FROM hashes LEFT JOIN files ON hashes.hashesid = files.hashesid WHERE "+" ".join(self.getFilePathsQueryList(paths))
             return self.execQuery(query)
 
-    def findFilesWithSameSize(self, paths, Hashes, allhash=False):
+    def findFilesWithSameSize(self, paths, allhash=False):
         command2 = self.getFilePathsQueryList(paths)
 
         """ Get records with same SIZE """
@@ -218,7 +218,7 @@ class Db(object):
             command1 = ["SELECT  bytes, count(*) as c FROM files WHERE"]
             command3 = ["GROUP BY bytes HAVING c > 1  ORDER BY c DESC"]
             command = command1 + command2 + command3  # GET all FILES with SAME SIZE
-            if self.debug: print(" ".join(command))
+            logging.debug(" ".join(command))
             allsamesizeresults = self.execQuery(" ".join(command)).fetchall()
 
             # Calculate the HASH for FILES with same SIZE
@@ -231,18 +231,29 @@ class Db(object):
                                      ["AND", "hashesid IS NULL"])
             samesize = self.execQuery(sameSizeQuery).fetchall()
             for r in samesize:
-                self.addHash(Hashes, r['path'])
+                self.addHash(r['path'])
+
+    def findUniqueFilesQuery(self, paths):
+        samehashesidQuery = "SELECT hashesid FROM files WHERE hashesid not like '' GROUP BY hashesid HAVING count(*) == 1"
+        command1 = [
+            "SELECT files.filesid, hashes.hashesid, files.path, files.bytes, hashes.hash",
+            "FROM files  LEFT JOIN  hashes  on hashes.hashesid  = files.hashesid  WHERE "]
+        command2 = self.getFilePathsQueryList(paths)
+        command3 = ["AND", "hashes.hashesid IN (",samehashesidQuery , ")"]
+        command4 = ["ORDER BY hashes.hashesid DESC"]
+        command = command1 + command2 + command3 + command4
+
+        return self.execQuery(" ".join(command))
 
     def findAndInsertDuplicates(self,paths):
         duplicatesClass = Duplicates()
-        duplicates = self.findDuplicates(paths)
+        duplicates = self.findDuplicatesQuery(paths).fetchall()
 
         insertsList,updateList = duplicatesClass.insertOrUpdate(self.getDuplicates(paths), duplicates)
         self.insertDuplicates(insertsList, False)
         self.updateDuplicatesIsUpdated(updateList)
 
-    def findDuplicates(self, paths):
-
+    def findDuplicatesQuery(self, paths):
         samehashesidQuery = "SELECT hashesid FROM files WHERE hashesid not like '' GROUP BY hashesid HAVING count(*) > 1"
         command1 = [
             "SELECT files.filesid, hashes.hashesid, files.path, files.bytes, hashes.hash",
@@ -252,7 +263,7 @@ class Db(object):
         command4 = ["ORDER BY hashes.hashesid DESC"]
         command = command1 + command2 + command3 + command4
 
-        return self.execQuery(" ".join(command)).fetchall()
+        return self.execQuery(" ".join(command))
 
 
     # def findDuplicates(self, paths):
@@ -297,7 +308,7 @@ class Db(object):
         if len(duplicatesList) == 0:
             return
 
-        print("\n\t Insert Duplicate files. Number of files: %i" % (len(duplicatesList)))
+        logging.info("Insert Duplicate files. Number of files: %i" % (len(duplicatesList)))
         pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=len(duplicatesList)).start()
         pbarCount = 0
 
@@ -358,7 +369,7 @@ class Db(object):
         command1 = ["SELECT * FROM files LEFT JOIN duplicates on files.filesid = duplicates.filesid  WHERE"]
         command3 = ["AND", "files.filesid IN ( SELECT filesid FROM duplicates WHERE hashesid = ?) "]
         command = command1 + command2 + command3
-        if self.debug: print(" ".join(command))
+        logging.debug(" ".join(command))
         return self.execQuery(" ".join(command), (hashesid,))
 
     def addHash(self, path):
@@ -417,31 +428,30 @@ class Db(object):
         self.conn.commit()
 
     def execQuery(self, query, values=None):
-        if self.debug: print(" ".join(query) + " " + str(values))
+        logging.debug(" ".join(query) + " " + str(values))
         if values == None:
             return self.c.execute(query)
         else:
             return self.c.execute(query, values)
 
-    def execQueriesProgress(self, query, valuesList, dispMsg="Number of queries: "):
-        print("\n", dispMsg, len(valuesList))
-        pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=len(valuesList)).start()
-        pbarCount = 0
-        for value in valuesList:
-            self.execQuery(query, value)
-            pbarCount += 1
-            pbar.update(pbarCount)
-
-        pbar.finish()
-        self.commit()
+    # def execQueriesProgress(self, query, valuesList, dispMsg="Number of queries: "):
+    #     logging.info("\n", dispMsg, len(valuesList))
+    #     pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=len(valuesList)).start()
+    #     pbarCount = 0
+    #     for value in valuesList:
+    #         self.execQuery(query, value)
+    #         pbarCount += 1
+    #         pbar.update(pbarCount)
+    #
+    #     pbar.finish()
+    #     self.commit()
 
     def execQueryMany(self, query, valuesList, toprint=False, dispMsg="Number of queries: "):
         if len(valuesList) > 0:
-            if self.debug: print(query + " " + str(valuesList))
-            # print("\n"+query + " " + str(len(valuesList)))
+            logging.debug(query + " " + str(valuesList))
             chuncks=list(self.execQueryManyChunks(valuesList, 50))
 
-            if toprint: print("\n", dispMsg, len(chuncks))
+            if toprint: logging.info("\n", dispMsg, len(chuncks))
             if toprint: pbar = ProgressBar(widgets=[Percentage(), Bar()], maxval=len(chuncks)).start()
             if toprint: pbarCount =0
 

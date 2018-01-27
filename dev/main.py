@@ -4,8 +4,8 @@
 #License: GPLv3 License
 #Email: dipietro.salvatore [at] gmail dot com
 
-__version__ = "3.0.1"
-__date__ = "2017-11-20"
+__version__ = "3.0.2"
+__date__ = "2018-01-27"
 
 
 """
@@ -18,6 +18,7 @@ which gives you the ability to determine what files to delete.
 
 import sys, multiprocessing, os,pathlib
 import sqlite3, time, hashlib
+import logging
 from optparse import Option, OptionParser
 from progressbar import Bar, Percentage, ProgressBar
 from multiprocessing.pool import ThreadPool
@@ -36,15 +37,10 @@ debug = False
 
 
 
-
 ################# LINE40 #############################
 
 
-
-
-
-
-
+logging.basicConfig(format='%(asctime)s %(levelname)s: %(message)s', level=logging.INFO)
 
 
 # URL https://stackoverflow.com/questions/4109436/processing-multiple-values-for-one-single-option-using-getopt-optparse
@@ -68,7 +64,7 @@ def checkOptions(options):
 
     """ Test options"""
     if options.open and options.tmpDB:
-        sys.stderr.write("Do you want to use a temporary database (--tmpDB) or not?")
+        logging.error("Do you want to use a temporary database (--tmpDB) or not?")
         sys.exit(1)
 
 
@@ -79,6 +75,10 @@ def checkOptions(options):
     else:
         options.size = 0
 
+    # Hashall
+    if not options.hashall:
+        options.hashall = False
+
     #MaxSizeHash
     if options.maxsizehash:
         options.maxsizehash = int(options.maxsizehash) * 1048576
@@ -86,6 +86,7 @@ def checkOptions(options):
         options.maxsizehash = 0
 
     #PATHS
+    duplicates = False
     if options.path and len(options.path) > 0:
         absolutePath = list()
         for i in options.path:
@@ -106,6 +107,9 @@ def checkOptions(options):
     else:
         options.threads = int(cpu_count())
 
+    # nosearchduplicate
+    if options.nosearchduplicate:
+        options.searchduplicate=False
 
     return options
 
@@ -122,10 +126,13 @@ def main():
     p.add_option('--maxsizehash', '-m', help="Set the maximum size in MB to hash.")
     p.add_option('--threads', '-u', help="Number of threads to use. By defaults use the same number of CPU cores")
     p.add_option('--hashall','-a', action="store_true",help="Hash all the files. By defauls it hash only files with the same size.")
-    p.add_option('--dryrun', '-d', action="store_true", help="Does not delete anything. Use ONLY with interactive mode")
+    p.add_option('--dryrun', '-n', action="store_true", help="Does not delete anything. Use ONLY with interactive mode")
     p.add_option('--report', '-r', action="store_true", help="Generates a report from a previous run")
+    p.add_option('--noreport', '-R', action="store_true", help="Does not generates a report.")
     p.add_option('--interactive', '-i', action="store_true", help='Interactive mode to delete files')
-    p.add_option('--searchduplicate', '-D', action="store_true", help='Search duplicate files only')
+    p.add_option('--searchduplicate', '-d', action="store_true", help='Search duplicate files only (by default)')
+    p.add_option('--nosearchduplicate', '-D', action="store_true", help='Don\'t search duplicate files.')
+    p.add_option('--searchunique', '-U', action="store_true", help='Search unique files only (Use with -r -D ).')
     options, arguments = p.parse_args()
     options = checkOptions(options)
 
@@ -147,10 +154,10 @@ def main():
 
 
     """ Start program """
-    if options.path:
+    if options.path and not options.report:
         for path in options.path:
             if not os.path.isdir(path):
-                sys.stderr.write("Search path does not exist or is not a directory: %s\n" % path)
+                logging.error("Search path does not exist or is not a directory: %s\n" % path)
                 sys.exit(1)
 
         for path in options.path:
@@ -158,18 +165,18 @@ def main():
                 filesClass = Files(path, options.threads, options.size)
                 filesClass.debug = debug
 
-                print("%s\t Load in memory file details for path %s" %(timestr(), path))
+                logging.info("Load in memory file details for path %s" %(path))
                 dbClass.fillCacheFilesInPaths(path)
                 dbClass.setIsUpdated(path)
 
-                print("%s\t Search files in folder: %s." % (timestr(), path))
+                logging.info("Search files in folder: %s." % (path))
                 filesDetailsProcess = multiprocessing.Process(target=filesClass.findFiles)
                 filesDetailsProcess.start()
 
                 while filesDetailsProcess.is_alive():
                     dbClass.insertFiles(path, filesClass.filesDetailsQueue, options.hashall)
 
-                print("%s\t Insert in DB files in folder: %s." % (timestr(), path))
+                logging.info("Insert in DB files in folder: %s." % (path))
                 dbClass.insertFiles(path, filesClass.filesDetailsQueue, options.hashall)
 
                 filesDetailsProcess.terminate()
@@ -177,29 +184,28 @@ def main():
 
 
             except (KeyboardInterrupt, SystemExit):
-                print("Exiting nicely from Liten3...")
+                logging.error("Exiting nicely from Liten3...")
                 sys.exit(1)
 
-
-        print("%s\t Clean DB files from old files." % (timestr()))
+        logging.info("Clean DB files from old files.")
         dbClass.rmOldFiles(options.path)
 
-        print("%s\t Looking for Files with same size" % (timestr()))
-        dbClass.findFilesWithSameSize(options.path, hashesClass, options.hashall)
+        logging.info("Looking for Files with same size")
+        dbClass.findFilesWithSameSize(options.path, options.hashall)
 
-        print("%s\t Load in memory hashes for path %s" % (timestr(), str(options.path)))
+        logging.info("Load in memory hashes for path %s" % (str(options.path)))
         dbClass.fillCacheFilesInPaths(options.path)
-        dbClass.fillCacheAllHashes(options.path)
+        dbClass.fillCacheAllHashes()
 
         if hashesClass.sizeFiles() > 0:
-            print("%s\t Calculate hashes for files in path %s" % (timestr(), str(options.path)))
+            logging.info("Calculate hashes for files in path %s" % (str(options.path)))
             calcHashesProcess = multiprocessing.Process(target=hashesClass.calcHashes)
             calcHashesProcess.start()
 
             while calcHashesProcess.is_alive():
                 dbClass.insertHashes(hashesClass.hashesQueue, options.path, False)
 
-            print("%s\t Insert in DB hashes in folder: %s." % (timestr(), str(options.path)))
+            logging.info("Insert in DB hashes in folder: %s." % (str(options.path)))
             dbClass.insertHashes(hashesClass.hashesQueue, options.path, False)
 
             calcHashesProcess.terminate()
@@ -207,22 +213,25 @@ def main():
         dbClass.commit()
 
 
-    if options.searchduplicate:
+    if options.searchduplicate and not options.nosearchduplicate:
         if not options.path: options.path = '/'
-        print("%s\t Looking for Duplicated files with same Hash." %(timestr()))
+        logging.info("Looking for Duplicated files with same Hash.")
         dbClass.findAndInsertDuplicates(options.path)
 
+    if options.searchunique:
+        if not options.path: options.path = '/'
+        logging.info("Looking for Unique files.")
+        dbClass.findUniqueFilesQuery(options.path)
 
-    if options.report:
+
+    if options.report and not options.noreport:
         reportClass = Report(dbClass)
         if not options.path: options.path = "/"
-        if options.export:
-            reportClass.full_report(options.path, options.export)
-        else:
-            reportClass.full_report(options.path, None)
+        if not options.export: options.export = None
+        reportClass.fullReport(options.path, options.export, options.searchduplicate, options.searchunique)
 
 
-    if options.interactive or options.delete:
+    if (options.interactive or options.delete) and (not options.searchunique) :
         interactiveClass = Interactive(dbClass)
         interactiveClass.debug = debug
         if options.dryrun:

@@ -1,4 +1,4 @@
-import os
+import os, logging
 
 
 class Interactive(object):
@@ -18,10 +18,10 @@ class Interactive(object):
         "starts a new session"
 
         if self.dryrun:
-            print("\n#####################################################")
-            print(  "# Running in DRY RUN mode. No files will be deleted #")
-            print(  "#####################################################\n")
-        print("""
+            logging.info("\n#####################################################")
+            logging.info("# Running in DRY RUN mode. No files will be deleted #")
+            logging.info("#####################################################\n")
+        logging.info("""
 \t LITEN 3 \n
 
 Starting a new Interactive Session.
@@ -44,7 +44,7 @@ Starting a new Interactive Session.
                     for i in hash :
                         filepaths.append(i['path'])
                         if not self.autoDelete:
-                            print("%d \t %s" % (count, i['path']))
+                            logging.info("%d \t %s" % (count, i['path']))
                             count += 1
                     if self.autoDelete :
                         files = self.areFilesInFolder(filepaths)
@@ -62,18 +62,18 @@ Starting a new Interactive Session.
                                 answer = False
 
                     except ValueError:
-                        print("--------------------------------------------------\n")
+                        logging.info("--------------------------------------------------\n")
 
-            print("Files selected for complete removal:\n")
+            logging.info("Files selected for complete removal:\n")
             for selection in forDeletion:
                 if selection:
                     print(selection)
-            print("\n")
+            logging.info("\n")
 
             if self.dryrun:
-                print("###########################")
-                print("# DRY RUN mode ends here. #")
-                print("###########################\n")
+                logging.info("###########################")
+                logging.info("# DRY RUN mode ends here. #")
+                logging.info("###########################\n")
 
             if not self.dryrun:
                 confirm = input("Type Yes to confirm (No to cancel): ")
@@ -81,16 +81,16 @@ Starting a new Interactive Session.
                     for selection in forDeletion:
                         if selection:
                             try:
-                                print("Removing file:\t %s" % selection)
+                                logging.info("Removing file:\t %s" % selection)
                                 os.remove(selection)
                                 self.DB.deleteFilePath(selection)
                             except OSError:
-                                "Could not delete:\t %s \nCheck Permissions" % selection
+                                logging.error("Could not delete:\t %s \nCheck Permissions" % selection)
             else:
-                print("Cancelling operation, no files were deleted.")
+                logging.error("Cancelling operation, no files were deleted.")
 
         except KeyboardInterrupt:
-            print("\nExiting nicely from interactive mode. No files deleted\n")
+            logging.error("\nExiting nicely from interactive mode. No files deleted\n")
 
 
     def delete(self, deletePaths):
