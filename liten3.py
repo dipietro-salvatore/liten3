@@ -4,8 +4,8 @@
 #License: GPLv3 License
 #Email: dipietro.salvatore [at] gmail dot com
 
-__version__ = "3.0.1"
-__date__ = "2017-11-20"
+__version__ = "3.0.2"
+__date__ = "2018-01-27"
 
 
 """
@@ -1027,6 +1027,7 @@ def main():
     p.add_option('--searchduplicate', '-d', action="store_true", help='Search duplicate files only (by default)')
     p.add_option('--nosearchduplicate', '-D', action="store_true", help='Don\'t search duplicate files.')
     p.add_option('--searchunique', '-U', action="store_true", help='Search unique files only (Use with -r -D ).')
+    p.add_option('--skipsearch', '-S', action="store_true", help='Skip scan of the files specified with -p .')
     options, arguments = p.parse_args()
     options = checkOptions(options)
 
@@ -1048,7 +1049,7 @@ def main():
 
 
     """ Start program """
-    if options.path and not options.report==True:
+    if options.path and not options.skipsearch:
         for path in options.path:
             if not os.path.isdir(path):
                 logging.error("Search path does not exist or is not a directory: %s\n" % path)
